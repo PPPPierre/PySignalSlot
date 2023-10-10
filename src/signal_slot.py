@@ -39,7 +39,7 @@ class SignalInstance():
     def connect(self, cbl):
         if isinstance(cbl, SignalInstance):
             cbl = cbl.emit
-        elif not hasattr(cbl, "__call__"):
+        elif not callable(cbl):
             raise ValueError(
                 f"invalid slot method {cbl}, must be a callable instance"
             )
@@ -56,7 +56,6 @@ class SignalInstance():
 
         # argument type check
         signal_args, signal_kwargs = self.transform_args(args, kwargs, self._input_pattern)
-
         for w_owner, w_cbl in self._subscribers:
             cbl = w_cbl()
             owner = w_owner() if w_owner else None
@@ -79,7 +78,7 @@ class SignalInstance():
             if isinstance(owner, EventLoopThread) and hasattr(cbl, '_slot_patterns'):
                 owner._put_slot(cbl, slot_args, slot_kwargs)
                 return
-            cbl(owner, *signal_args, **signal_kwargs)
+            cbl(owner, *slot_args, **slot_kwargs)
 
     @staticmethod
     def transform_args(args, kwargs, input_pattern):
@@ -123,7 +122,8 @@ class SignalInstance():
                     raise TypeError(
                         f"got multiple values for argument '{name}'"
                     )
-                new_kwargs[name] = arg
+                else:
+                    new_kwargs[name] = arg
             else:
                 new_args.append(arg)
 
@@ -132,15 +132,15 @@ class SignalInstance():
 
 class Signal(SignalInstance):
 
-    def __init__(self, *arg_pattern: List[Tuple[type, Optional[str]]]):
-        super().__init__(*arg_pattern)
+    def __init__(self, *input_pattern: List[Tuple[type, Optional[str]]]):
+        super().__init__(*input_pattern)
         self._signal_instances = {}
     
     def __get__(self, owner, ownertype=None) -> SignalInstance:
         if owner is None:
             return self
         if owner not in self._signal_instances:
-            self._signal_instances[owner] = SignalInstance(*self._call_types, arguments=self._arguments)
+            self._signal_instances[owner] = SignalInstance(*self._input_pattern)
         return self._signal_instances[owner]
 
     def __set__(self, instance, value):
@@ -165,7 +165,7 @@ class Slot:
                 name = None
                 self._input_pattern.append((couple[0], name))
             else:
-                name = couple[0]
+                name = couple[1]
                 self._input_pattern.append(couple)
             if name is None:
                 if pre_name is not None:
@@ -201,10 +201,10 @@ class EventLoopThread(Thread):
         self._main_work_stop = True
         self.daemon = True
 
-    def _put_slot(self, slot, kwargs):
+    def _put_slot(self, slot, args, kwargs):
         with self._signal_avalaibel:
             # self._logger.debug("Instance: {}, put slot: {}".format(self, slot))
-            self._slot_queue.put((slot, kwargs))
+            self._slot_queue.put((slot, args, kwargs))
             self._signal_avalaibel.notify()
             # print("Thread: {}, finish put: {}".format(threading.get_native_id(), slot))
 
@@ -215,7 +215,7 @@ class EventLoopThread(Thread):
         except Exception:
             error_message = traceback.format_exc()
             self._logger.error(error_message)
-        self._put_slot(self._main_work_slot.__func__, {})
+        self._put_slot(self._main_work_slot.__func__, [], {})
 
         # Slot method loop
         while True:
@@ -223,8 +223,8 @@ class EventLoopThread(Thread):
                 self._slot_queue.queue.clear()
                 break
             try:
-                (slot, arguments) = self._slot_queue.get(block=False)
-                slot(self, **arguments)
+                (slot, args, kwargs) = self._slot_queue.get(block=False)
+                slot(self, *args, **kwargs)
             except Empty:
                 with self._signal_avalaibel:
                     if self._slot_queue.empty():
@@ -250,7 +250,7 @@ class EventLoopThread(Thread):
     def _main_work_slot(self):
         self.main_work_loop()
         if self._main_work_stop:
-            self._put_slot(self._main_work_slot.__func__, {})
+            self._put_slot(self._main_work_slot.__func__, [], {})
 
     def stop_main_work_loop(self):
         self._main_work_stop = False
@@ -274,7 +274,7 @@ class EventLoopThread(Thread):
 
     def quit(self):
         self._logger.info('Quit {}'.format(self))
-        self._put_slot(self._set_exit_true.__func__, {})
+        self._put_slot(self._set_exit_true.__func__, [], {})
         with self._signal_avalaibel:
             self._signal_avalaibel.notify()
 

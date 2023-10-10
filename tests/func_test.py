@@ -6,7 +6,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 
 from src.signal_slot import Signal, Slot
-from unittest.mock import Mock, patch
+
 
 def test_without_args():
     signal = Signal()
@@ -124,7 +124,7 @@ def test_args_kwargs_5():
     with pytest.raises(TypeError):
         signal.emit(1, '0')
         
-def test_multi_signal_one_slot_1():
+def test_multi_signal_multi_slot_1():
     res = None
     signal_int = Signal((int, ))
     signal_str = Signal((str, ))
@@ -140,7 +140,7 @@ def test_multi_signal_one_slot_1():
     signal_str.emit('0')
     assert res == '0'
 
-def test_multi_signal_one_slot_2():
+def test_multi_signal_multi_slot_2():
     res = None
     signal_int = Signal((int, ))
     signal_str = Signal((str, ))
@@ -159,6 +159,19 @@ def test_multi_signal_one_slot_2():
     assert res == '0'
     signal_int_str.emit(2, '1')
     assert res == 2
+
+def test_one_signal_multi_slot_3():
+    res1, res2 = None, None
+    signal = Signal((int, 'arg1'), (str, 'arg2'))
+    @Slot((int, 'arg1'), (int, 'arg2'))
+    @Slot((int, 'arg1'), (str, 'arg2'))
+    def test(arg1, arg2):
+        nonlocal res1, res2
+        res1, res2 = arg1, arg2
+    signal.connect(test)
+    signal.emit(1, '0')
+    assert res1 == 1
+    assert res2 == '0'
 
 def test_loose_coupling_1():
     signal = Signal((int, ), (str, ))
