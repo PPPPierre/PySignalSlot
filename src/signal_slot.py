@@ -55,7 +55,7 @@ class SignalInstance():
         """
 
         # argument type check
-        signal_args, signal_kwargs = self.transform_args(args, kwargs, self._input_pattern)
+        signal_args, signal_kwargs = self.transform_args(self._input_pattern, *args, **kwargs)
         for w_owner, w_cbl in self._subscribers:
             cbl = w_cbl()
             owner = w_owner() if w_owner else None
@@ -63,13 +63,13 @@ class SignalInstance():
                 call_args, call_kwargs = None, None
                 for slot_pattern in cbl._slot_patterns:
                     try:
-                        call_args, call_kwargs = self.transform_args(signal_args, signal_kwargs, slot_pattern)
+                        call_args, call_kwargs = self.transform_args(slot_pattern, *signal_args, **signal_kwargs)
                     except TypeError:
                         continue
                 if call_args is None:
-                    raise TypeError("No available slot pattern can be triggered")
+                    raise TypeError(f"No available slot pattern can be triggered for slot {cbl}, get signal args: {signal_args}, signal kwargs: {signal_kwargs}, with slot patterns: {cbl._slot_patterns}, args: {args}, kwargs: {kwargs}, input_pattern: {self._input_pattern}, signal: {self}")
             elif isinstance(owner, SignalInstance):
-                call_args, call_kwargs = self.transform_args(signal_args, signal_kwargs, owner._input_pattern)
+                call_args, call_kwargs = self.transform_args(owner._input_pattern, *signal_args, **signal_kwargs)
             else:
                 call_args = signal_args
                 call_kwargs = signal_kwargs
@@ -83,7 +83,7 @@ class SignalInstance():
             cbl(owner, *call_args, **call_kwargs)
 
     @staticmethod
-    def transform_args(args, kwargs, input_pattern):
+    def transform_args(input_pattern, *args, **kwargs):
         if (len(args) + len(kwargs)) < len(input_pattern):
             raise TypeError(
                 "the total amount of arguments is smaller than defined"
