@@ -60,25 +60,27 @@ class SignalInstance():
             cbl = w_cbl()
             owner = w_owner() if w_owner else None
             if hasattr(cbl, '_slot_patterns'):
-                slot_args, slot_kwargs = None, None
+                call_args, call_kwargs = None, None
                 for slot_pattern in cbl._slot_patterns:
                     try:
-                        slot_args, slot_kwargs = self.transform_args(signal_args, signal_kwargs, slot_pattern)
+                        call_args, call_kwargs = self.transform_args(signal_args, signal_kwargs, slot_pattern)
                     except TypeError:
                         continue
-                if slot_args is None:
+                if call_args is None:
                     raise TypeError("No available slot pattern can be triggered")
+            elif isinstance(owner, SignalInstance):
+                call_args, call_kwargs = self.transform_args(signal_args, signal_kwargs, owner._input_pattern)
             else:
-                slot_args = signal_args
-                slot_kwargs = signal_kwargs
+                call_args = signal_args
+                call_kwargs = signal_kwargs
 
             if owner is None:
-                cbl(*slot_args, **slot_kwargs)
+                cbl(*call_args, **call_kwargs)
                 return
             if isinstance(owner, EventLoopThread) and hasattr(cbl, '_slot_patterns'):
-                owner._put_slot(cbl, slot_args, slot_kwargs)
+                owner._put_slot(cbl, call_args, call_kwargs)
                 return
-            cbl(owner, *slot_args, **slot_kwargs)
+            cbl(owner, *call_args, **call_kwargs)
 
     @staticmethod
     def transform_args(args, kwargs, input_pattern):
