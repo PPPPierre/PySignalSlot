@@ -1,24 +1,25 @@
-import threading
-import types
 import weakref
-import time
 import logging
 import traceback
 from threading import Thread, Event, Condition, Lock, Timer
 from queue import Queue, Empty
-from typing import overload, Optional, Any, Callable, List, Tuple
-from functools import wraps
+from typing import Optional, Callable, List, Tuple
 
 
 class SignalInstance():
 
     def __init__(self, *input_pattern: List[Tuple[type, Optional[str]]]):
+        """
+        The pattern format should be like:
+        [(type1, argname1), (type2, argname2), ...]
+        """
+
         self._input_pattern = []
         self._subscribers = set()
+
         # check
         pre_name = None
         called_name = set()
-
         for couple in input_pattern:
             if len(couple) == 1:
                 name = None
@@ -36,12 +37,12 @@ class SignalInstance():
                 called_name.add(name)
             pre_name = name
         
-    def connect(self, cbl):
+    def connect(self, cbl: Callable):
         if isinstance(cbl, SignalInstance):
             cbl = cbl.emit
         elif not callable(cbl):
             raise ValueError(
-                f"invalid slot method {cbl}, must be a callable instance"
+                f"invalid connect target {cbl}, it must be a callable instance or a SignalInstance"
             )
         w_cbl = weakref.ref(cbl.__func__) if hasattr(cbl, "__func__") else weakref.ref(cbl)
         w_owner = weakref.ref(cbl.__self__) if hasattr(cbl, "__self__") else None
@@ -49,13 +50,14 @@ class SignalInstance():
             (w_owner, w_cbl)
         )
 
-    def emit(self, *args, **kwargs):
-        f"""
-        {self._input_pattern}
-        """
+    def __call__(self, *args, **kwargs):
+        self.emit(*args, **kwargs)
 
+    def emit(self, *args, **kwargs):
         # argument type check
         signal_args, signal_kwargs = self.transform_args(self._input_pattern, *args, **kwargs)
+
+        # Activate each target
         for w_owner, w_cbl in self._subscribers:
             cbl = w_cbl()
             owner = w_owner() if w_owner else None
@@ -83,6 +85,8 @@ class SignalInstance():
 
     @staticmethod
     def transform_args(input_pattern, *args, **kwargs):
+
+        """ Args amount check """
         if (len(args) + len(kwargs)) < len(input_pattern):
             raise TypeError(
                 "the total amount of arguments is smaller than defined"
@@ -94,7 +98,17 @@ class SignalInstance():
 
         for i, (call_type, name) in enumerate(input_pattern):
             
-            if name is not None:
+            """ Argument attribute """
+            if name is None:
+                # For arguments without name
+                if j < len(args):
+                    arg = args[j]
+                    j += 1
+                else:
+                    k, arg = list(kwargs.items())[j - len(args)]
+                    kwargs.pop(k)
+            else:
+                # For arguments with a name
                 if name in kwargs:
                     arg = kwargs.pop(name)
                 else:
@@ -105,19 +119,14 @@ class SignalInstance():
                         raise TypeError(
                             f"missing 1 required positional argument: '{name}'"
                         )
-            else:
-                if j < len(args):
-                    arg = args[j]
-                    j += 1
-                else:
-                    k, arg = list(kwargs.items())[j - len(args)]
-                    kwargs.pop(k)
             
+            """ Type check """
             if not isinstance(arg, call_type):
                 raise TypeError(
                     f"the type of the arg in index {i} should be {call_type}"
                 )
             
+            """ Form new input args """
             if name is not None:
                 if name in new_kwargs:
                     raise TypeError(
@@ -154,11 +163,11 @@ class Signal(SignalInstance):
 class Slot:
 
     def __init__(self, *args_pattern: List[Tuple[type, Optional[str]]]):
-        self._input_pattern = []
         """
-        The pattern format should be like =
+        The pattern format should be like:
         [(type1, argname1), (type2, argname2), ...]
         """
+        self._input_pattern = []
         pre_name = None
         called_name = set()
         for couple in args_pattern:
@@ -204,21 +213,19 @@ class EventLoopThread(Thread):
 
     def _put_slot(self, slot, args, kwargs):
         with self._signal_avalaibel:
-            # self._logger.debug("Instance: {}, put slot: {}".format(self, slot))
             self._slot_queue.put((slot, args, kwargs))
             self._signal_avalaibel.notify()
-            # print("Thread: {}, finish put: {}".format(threading.get_native_id(), slot))
 
     def run(self):
-        # Before slot method loop
+        """ Before the event loop """
         try:
-            self.init_work()
+            self.pre_work()
         except Exception:
             error_message = traceback.format_exc()
             self._logger.error(error_message)
         self._put_slot(self._main_work_slot.__func__, [], {})
 
-        # Slot method loop
+        """ During the event loop """
         while True:
             if self._exit_flag:
                 self._slot_queue.queue.clear()
@@ -234,9 +241,9 @@ class EventLoopThread(Thread):
                 error_message = traceback.format_exc()
                 self._logger.error(error_message)
 
-        # After slot method loop
+        """ After the event loop """
         try:
-            self.finalize_work()
+            self.post_work()
         except Exception:
             error_message = traceback.format_exc()
             self._logger.error(error_message)
@@ -245,22 +252,22 @@ class EventLoopThread(Thread):
                 sub_thread.quit()
                 sub_thread.join()
 
-    def main_work_loop(self):
+    def pre_work(self):
+        pass
+
+    def post_work(self):
+        pass
+
+    def main_work(self):
         self._main_work_stop = False
 
     def _main_work_slot(self):
-        self.main_work_loop()
+        self.main_work()
         if self._main_work_stop:
             self._put_slot(self._main_work_slot.__func__, [], {})
 
-    def stop_main_work_loop(self):
+    def stop_main_work(self):
         self._main_work_stop = False
-
-    def init_work(self):
-        pass
-
-    def finalize_work(self):
-        pass
 
     def start(self) -> None:
         self._exit_flag = False
@@ -274,7 +281,7 @@ class EventLoopThread(Thread):
         self._pause_event.set()
 
     def quit(self):
-        self._logger.info('Quit {}'.format(self))
+        self._logger.info(f'Quit event loop thread {self}')
         self._put_slot(self._set_exit_true.__func__, [], {})
         with self._signal_avalaibel:
             self._signal_avalaibel.notify()
