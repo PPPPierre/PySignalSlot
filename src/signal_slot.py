@@ -76,11 +76,10 @@ class SignalInstance():
 
             if owner is None:
                 cbl(*call_args, **call_kwargs)
-                return
-            if isinstance(owner, EventLoopThread) and hasattr(cbl, '_slot_patterns'):
+            elif isinstance(owner, EventLoopThread) and hasattr(cbl, '_slot_patterns'):
                 owner._put_slot(cbl, call_args, call_kwargs)
-                return
-            cbl(owner, *call_args, **call_kwargs)
+            else:
+                cbl(owner, *call_args, **call_kwargs)
 
     @staticmethod
     def transform_args(input_pattern, *args, **kwargs):
