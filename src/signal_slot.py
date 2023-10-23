@@ -62,7 +62,7 @@ class SignalInstance():
             cbl = w_cbl()
             owner = w_owner() if w_owner else None
             if w_owner is not None and owner is None:
-                raise ReferenceError("The object referenced by weak_ref has been garbage collected")
+                raise ReferenceError("The owner of the slot method has been garbage collected")
             if hasattr(cbl, '_slot_patterns'):
                 call_args, call_kwargs = None, None
                 for slot_pattern in cbl._slot_patterns:
@@ -201,9 +201,8 @@ class EventLoopThread(Thread):
         super().__init__()
         self._logger = logging.getLogger('__main__')
         self._parent = parent
-        if self._parent:
-            if isinstance(self._parent, EventLoopThread):
-                self._parent._subthreads.append(self)
+        if self._parent and isinstance(self._parent, EventLoopThread):
+            self._parent._subthreads.append(self)
         self._subthreads = []
         self._subthreads: List[EventLoopThread]
         self._slot_queue = Queue()
@@ -255,9 +254,11 @@ class EventLoopThread(Thread):
                 sub_thread.join()
 
     def pre_work(self):
+        # Work before the event loop started
         pass
 
     def post_work(self):
+        # Work after the event loop ended
         pass
 
     def main_work(self):
