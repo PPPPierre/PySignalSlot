@@ -61,6 +61,8 @@ class SignalInstance():
         for w_owner, w_cbl in self._subscribers:
             cbl = w_cbl()
             owner = w_owner() if w_owner else None
+            if w_owner is not None and owner is None:
+                raise ReferenceError("The object referenced by weak_ref has been garbage collected")
             if hasattr(cbl, '_slot_patterns'):
                 call_args, call_kwargs = None, None
                 for slot_pattern in cbl._slot_patterns:
