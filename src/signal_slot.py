@@ -210,6 +210,7 @@ class EventLoopThread(Thread):
         self._pause_event = Event()
         self._exit_flag = False
         self._main_work_stop = True
+        self.started = False
         self.daemon = True
 
     def _put_slot(self, slot, args, kwargs):
@@ -230,6 +231,7 @@ class EventLoopThread(Thread):
         while True:
             if self._exit_flag:
                 self._slot_queue.queue.clear()
+                self.started = False
                 break
             try:
                 (slot, args, kwargs) = self._slot_queue.get(block=False)
@@ -273,8 +275,12 @@ class EventLoopThread(Thread):
         self._main_work_stop = False
 
     def start(self) -> None:
-        self._exit_flag = False
-        return super().start()
+        if self.started:
+            return
+        else:
+            self.started = True
+            self._exit_flag = False
+            return super().start()
 
     def pause(self):
         self._pause_event.clear()
