@@ -290,7 +290,7 @@ class EventLoopThread(Thread):
         self._pause_event.set()
 
     def quit(self):
-        self._logger.info(f'Quit event loop thread {self}')
+        # self._logger.info(f'Quit event loop thread')
         self._put_slot(self._set_exit_true.__func__, [], {})
         with self._signal_avalaibel:
             self._signal_avalaibel.notify()
