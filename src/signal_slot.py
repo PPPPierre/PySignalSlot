@@ -125,7 +125,7 @@ class SignalInstance():
             """ Type check """
             if not isinstance(arg, call_type):
                 raise TypeError(
-                    f"the type of the arg in index {i} should be {call_type}"
+                    f"the type of the arg in index {i} should be {call_type}, get {arg} of type: {type(arg)}"
                 )
             
             """ Form new input args """
