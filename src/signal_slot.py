@@ -58,11 +58,15 @@ class SignalInstance():
         signal_args, signal_kwargs = self.transform_args(self._input_pattern, *args, **kwargs)
 
         # Activate each target
-        for w_owner, w_cbl in self._subscribers:
+        for subscriber in self._subscribers.copy():
+            w_owner, w_cbl = subscriber
             cbl = w_cbl()
             owner = w_owner() if w_owner else None
+
             if w_owner is not None and owner is None:
-                raise ReferenceError("The owner of the slot method has been garbage collected")
+                self._subscribers.remove(subscriber)
+                continue
+            
             if hasattr(cbl, '_slot_patterns'):
                 call_args, call_kwargs = None, None
                 for slot_pattern in cbl._slot_patterns:
@@ -205,7 +209,7 @@ class EventLoopThread(Thread):
             self._parent._subthreads.append(self)
         self._subthreads = []
         self._subthreads: List[EventLoopThread]
-        self._slot_queue = Queue()
+        self._slot_queue: Queue = Queue()
         self._signal_avalaibel = Condition(Lock())
         self._pause_event = Event()
         self._exit_flag = False
@@ -290,7 +294,6 @@ class EventLoopThread(Thread):
         self._pause_event.set()
 
     def quit(self):
-        # self._logger.info(f'Quit event loop thread')
         self._put_slot(self._set_exit_true.__func__, [], {})
         with self._signal_avalaibel:
             self._signal_avalaibel.notify()
