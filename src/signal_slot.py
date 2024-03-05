@@ -1,18 +1,21 @@
 import weakref
-import logging
-import traceback
-from threading import Thread, Event, Condition, Lock, Timer
+import time
+
+from functools import wraps
+from traceback import format_exc
+from logging import Logger, getLogger
+from threading import Thread, Event, Condition, Lock, Timer, current_thread
 from queue import Queue, Empty
-from typing import Optional, Callable, List, Tuple
+from typing import Optional, Callable, List, Tuple, Dict, Set
 
 
 class SignalInstance():
 
     def __init__(self, *input_pattern: List[Tuple[type, Optional[str]]]):
-        """
+        '''
         The pattern format should be like:
         [(type1, argname1), (type2, argname2), ...]
-        """
+        '''
 
         self._input_pattern = []
         self._subscribers = set()
@@ -30,7 +33,7 @@ class SignalInstance():
 
             if name is None:
                 if pre_name is not None:
-                    raise SyntaxError("unamed argument follows named argument")
+                    raise SyntaxError('unamed argument follows named argument')
             else:
                 if name in called_name:
                     raise SyntaxError("duplicate argument '{name}' in signal definition")
@@ -42,10 +45,10 @@ class SignalInstance():
             cbl = cbl.emit
         elif not callable(cbl):
             raise ValueError(
-                f"invalid connect target {cbl}, it must be a callable instance or a SignalInstance"
+                f'invalid connect target {cbl}, it must be a callable instance or a SignalInstance'
             )
-        w_cbl = weakref.ref(cbl.__func__) if hasattr(cbl, "__func__") else weakref.ref(cbl)
-        w_owner = weakref.ref(cbl.__self__) if hasattr(cbl, "__self__") else None
+        w_cbl = weakref.ref(cbl.__func__) if hasattr(cbl, '__func__') else weakref.ref(cbl)
+        w_owner = weakref.ref(cbl.__self__) if hasattr(cbl, '__self__') else None
         self._subscribers.add(
             (w_owner, w_cbl)
         )
@@ -75,7 +78,7 @@ class SignalInstance():
                     except TypeError:
                         continue
                 if call_args is None:
-                    raise TypeError(f"No available slot pattern can be triggered for slot {cbl}, get signal args: {signal_args}, signal kwargs: {signal_kwargs}, with slot patterns: {cbl._slot_patterns}, args: {args}, kwargs: {kwargs}, input_pattern: {self._input_pattern}, signal: {self}")
+                    raise TypeError(f'No available slot pattern can be triggered for slot {cbl}, get signal args: {signal_args}, signal kwargs: {signal_kwargs}, with slot patterns: {cbl._slot_patterns}, args: {args}, kwargs: {kwargs}, input_pattern: {self._input_pattern}, signal: {self}')
             elif isinstance(owner, SignalInstance):
                 call_args, call_kwargs = self.transform_args(owner._input_pattern, *signal_args, **signal_kwargs)
             else:
@@ -92,10 +95,10 @@ class SignalInstance():
     @staticmethod
     def transform_args(input_pattern, *args, **kwargs):
 
-        """ Args amount check """
+        ''' Args amount check '''
         if (len(args) + len(kwargs)) < len(input_pattern):
             raise TypeError(
-                "the total amount of arguments is smaller than defined"
+                'the total amount of arguments is smaller than defined'
             )
 
         new_args = []
@@ -104,7 +107,7 @@ class SignalInstance():
 
         for i, (call_type, name) in enumerate(input_pattern):
             
-            """ Argument attribute """
+            ''' Argument attribute '''
             if name is None:
                 # For arguments without name
                 if j < len(args):
@@ -126,13 +129,13 @@ class SignalInstance():
                             f"missing 1 required positional argument: '{name}'"
                         )
             
-            """ Type check """
+            ''' Type check '''
             if not isinstance(arg, call_type):
                 raise TypeError(
-                    f"the type of the arg in index {i} should be {call_type}, get {arg} of type: {type(arg)}"
+                    f'the type of the arg in index {i} should be {call_type}, get {arg} of type: {type(arg)}'
                 )
             
-            """ Form new input args """
+            ''' Form new input args '''
             if name is not None:
                 if name in new_kwargs:
                     raise TypeError(
@@ -160,19 +163,19 @@ class Signal(SignalInstance):
         return self._signal_instances[owner]
 
     def __set__(self, instance, value):
-        raise AttributeError("the signal can not be manually set")
+        raise AttributeError('the signal can not be manually set')
 
     def __delete__(self, instance):
-        raise AttributeError("the signal can not be manually deleted")
+        raise AttributeError('the signal can not be manually deleted')
 
 
 class Slot:
 
     def __init__(self, *args_pattern: List[Tuple[type, Optional[str]]]):
-        """
+        '''
         The pattern format should be like:
         [(type1, argname1), (type2, argname2), ...]
-        """
+        '''
         self._input_pattern = []
         pre_name = None
         called_name = set()
@@ -185,53 +188,77 @@ class Slot:
                 self._input_pattern.append(couple)
             if name is None:
                 if pre_name is not None:
-                    raise SyntaxError("unamed argument follows named argument")
+                    raise SyntaxError('unamed argument follows named argument')
             else:
                 if name in called_name:
-                    raise SyntaxError(" duplicate argument '{name}' in signal definition")
+                    raise SyntaxError("duplicate argument '{name}' in signal definition")
                 called_name.add(name)
             pre_name = name
 
     def __call__(self, func):
-        if not hasattr(func, "_slot_patterns"):
+        if not hasattr(func, '_slot_patterns'):
             func._slot_patterns = []
         func._slot_patterns.append(self._input_pattern)
         return func
-
 
 class EventLoopThread(Thread):
 
     def __init__(self, parent=None):
         super().__init__()
-        self._logger = logging.getLogger('__main__')
-        self._parent = parent
+        self._logger: Logger = getLogger('__main__')
+        self._parent: Thread = parent
         if self._parent and isinstance(self._parent, EventLoopThread):
             self._parent._subthreads.append(self)
-        self._subthreads = []
-        self._subthreads: List[EventLoopThread]
+        self._subthreads: List[EventLoopThread] = []
         self._slot_queue: Queue = Queue()
-        self._signal_avalaibel = Condition(Lock())
-        self._pause_event = Event()
-        self._exit_flag = False
-        self._main_work_stop = True
-        self.started = False
-        self.daemon = True
+        self._signal_avalaible: Condition = Condition(Lock())
+        self._pause_event: Event = Event()
+        self._exit_flag: bool = False
 
-    def _put_slot(self, slot, args, kwargs):
-        with self._signal_avalaibel:
+        self._loop_wait_flag: Dict[str, bool] = {}
+        self._loop_timer: Dict[str, RepeatingTimer] = {}
+
+        self.started: bool = False
+        self.daemon: bool = True
+
+    def _put_slot(self, slot: Callable, args, kwargs) -> None:
+        with self._signal_avalaible:
             self._slot_queue.put((slot, args, kwargs))
-            self._signal_avalaibel.notify()
+            self._signal_avalaible.notify()
+
+    def _add_loop(self, func: Callable, interval: float):
+        if not hasattr(func, '__func__') or not hasattr(func, '__self__') or func.__self__ != self:
+            self._logger.warning('Only instance methods can be added into the loop')
+            return
+        
+        @wraps(func)
+        def loop_func(self, *args, **kwargs):
+            res = None
+            try:
+                res = func.__func__(self, *args, **kwargs)
+            finally:
+                self._loop_wait_flag[loop_func.__name__] = False
+                return res
+        
+        def call_back():
+            if not self._loop_wait_flag[loop_func.__name__]:
+                self._loop_wait_flag[loop_func.__name__] = True
+                self._put_slot(loop_func, [], {})
+            
+        timer = RepeatingTimer(interval=interval, function=call_back)
+        self._loop_wait_flag.update({loop_func.__name__: False})
+        self._loop_timer.update({loop_func.__name__: timer})
+        timer.start()
 
     def run(self):
-        """ Before the event loop """
+        ''' Before the event loop '''
         try:
             self.pre_work()
         except Exception:
-            error_message = traceback.format_exc()
+            error_message = format_exc()
             self._logger.error(error_message)
-        self._put_slot(self._main_work_slot.__func__, [], {})
 
-        """ During the event loop """
+        ''' During the event loop '''
         while True:
             if self._exit_flag:
                 self._slot_queue.queue.clear()
@@ -241,18 +268,18 @@ class EventLoopThread(Thread):
                 (slot, args, kwargs) = self._slot_queue.get(block=False)
                 slot(self, *args, **kwargs)
             except Empty:
-                with self._signal_avalaibel:
+                with self._signal_avalaible:
                     if self._slot_queue.empty():
-                        self._signal_avalaibel.wait()
+                        self._signal_avalaible.wait()
             except Exception:
-                error_message = traceback.format_exc()
+                error_message = format_exc()
                 self._logger.error(error_message)
 
-        """ After the event loop """
+        ''' After the event loop '''
         try:
             self.post_work()
         except Exception:
-            error_message = traceback.format_exc()
+            error_message = format_exc()
             self._logger.error(error_message)
         for sub_thread in self._subthreads:
             if sub_thread.is_alive():
@@ -266,17 +293,6 @@ class EventLoopThread(Thread):
     def post_work(self):
         # Work after the event loop ended
         pass
-
-    def main_work(self):
-        self._main_work_stop = False
-
-    def _main_work_slot(self):
-        self.main_work()
-        if self._main_work_stop:
-            self._put_slot(self._main_work_slot.__func__, [], {})
-
-    def stop_main_work(self):
-        self._main_work_stop = False
 
     def start(self) -> None:
         if self.started:
@@ -295,8 +311,8 @@ class EventLoopThread(Thread):
 
     def quit(self):
         self._put_slot(self._set_exit_true.__func__, [], {})
-        with self._signal_avalaibel:
-            self._signal_avalaibel.notify()
+        with self._signal_avalaible:
+            self._signal_avalaible.notify()
 
     def _set_exit_true(self):
         self._exit_flag = True
