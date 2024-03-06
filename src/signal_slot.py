@@ -281,6 +281,10 @@ class EventLoopThread(Thread):
         except Exception:
             error_message = format_exc()
             self._logger.error(error_message)
+        for timer in self._loop_timer.values():
+            if timer.is_alive():
+                timer.cancel()
+                timer.join()
         for sub_thread in self._subthreads:
             if sub_thread.is_alive():
                 sub_thread.quit()
