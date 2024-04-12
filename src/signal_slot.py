@@ -1,13 +1,7 @@
 import weakref
-import time
+import asyncio
 
-from functools import wraps
-from traceback import format_exc
-from logging import Logger, getLogger
-from threading import Thread, Event, Condition, Lock, Timer, current_thread
-from queue import Queue, Empty
-from typing import Optional, Callable, List, Tuple, Dict, Set
-
+from typing import Optional, Callable, List, Tuple, Awaitable
 
 class SignalInstance():
 
@@ -85,12 +79,25 @@ class SignalInstance():
                 call_args = signal_args
                 call_kwargs = signal_kwargs
 
-            if owner is None:
-                cbl(*call_args, **call_kwargs)
-            elif isinstance(owner, EventLoopThread) and hasattr(cbl, '_slot_patterns'):
-                owner._put_slot(cbl, call_args, call_kwargs)
+            if asyncio.iscoroutinefunction(cbl):
+                if owner is None:
+                    task = cbl(*call_args, **call_kwargs)
+                else:
+                    task = cbl(owner, *call_args, **call_kwargs)
+                
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:  # 'RuntimeError: There is no current event loop...'
+                    loop = None
+                if loop and loop.is_running():
+                    loop.create_task(task)
+                else:
+                    asyncio.run(task)
             else:
-                cbl(owner, *call_args, **call_kwargs)
+                if owner is None:
+                    cbl(*call_args, **call_kwargs)
+                else:
+                    cbl(owner, *call_args, **call_kwargs)
 
     @staticmethod
     def transform_args(input_pattern, *args, **kwargs):
@@ -200,131 +207,24 @@ class Slot:
             func._slot_patterns = []
         func._slot_patterns.append(self._input_pattern)
         return func
-
-class EventLoopThread(Thread):
-
-    def __init__(self, parent=None):
-        super().__init__()
-        self._logger: Logger = getLogger('__main__')
-        self._parent: Thread = parent
-        if self._parent and isinstance(self._parent, EventLoopThread):
-            self._parent._subthreads.append(self)
-        self._subthreads: List[EventLoopThread] = []
-        self._slot_queue: Queue = Queue()
-        self._signal_avalaible: Condition = Condition(Lock())
-        self._pause_event: Event = Event()
-        self._exit_flag: bool = False
-
-        self._loop_wait_flag: Dict[str, bool] = {}
-        self._loop_timer: Dict[str, RepeatingTimer] = {}
-
-        self.started: bool = False
-        self.daemon: bool = True
-
-    def _put_slot(self, slot: Callable, args, kwargs) -> None:
-        with self._signal_avalaible:
-            self._slot_queue.put((slot, args, kwargs))
-            self._signal_avalaible.notify()
-
-    def _add_loop(self, func: Callable, interval: float):
-        if not hasattr(func, '__func__') or not hasattr(func, '__self__') or func.__self__ != self:
-            self._logger.warning('Only instance methods can be added into the loop')
-            return
         
-        @wraps(func)
-        def loop_func(self, *args, **kwargs):
-            res = None
-            try:
-                res = func.__func__(self, *args, **kwargs)
-            finally:
-                self._loop_wait_flag[loop_func.__name__] = False
-                return res
-        
-        def call_back():
-            if not self._loop_wait_flag[loop_func.__name__]:
-                self._loop_wait_flag[loop_func.__name__] = True
-                self._put_slot(loop_func, [], {})
-            
-        timer = RepeatingTimer(interval=interval, function=call_back)
-        self._loop_wait_flag.update({loop_func.__name__: False})
-        self._loop_timer.update({loop_func.__name__: timer})
-        timer.start()
-
-    def run(self):
-        ''' Before the event loop '''
-        try:
-            self.pre_work()
-        except Exception:
-            error_message = format_exc()
-            self._logger.error(error_message)
-
-        ''' During the event loop '''
-        while True:
-            if self._exit_flag:
-                self._slot_queue.queue.clear()
-                self.started = False
-                break
-            try:
-                (slot, args, kwargs) = self._slot_queue.get(block=False)
-                slot(self, *args, **kwargs)
-            except Empty:
-                with self._signal_avalaible:
-                    if self._slot_queue.empty():
-                        self._signal_avalaible.wait()
-            except Exception:
-                error_message = format_exc()
-                self._logger.error(error_message)
-
-        ''' After the event loop '''
-        try:
-            self.post_work()
-        except Exception:
-            error_message = format_exc()
-            self._logger.error(error_message)
-        for timer in self._loop_timer.values():
-            if timer.is_alive():
-                timer.cancel()
-                timer.join()
-        for sub_thread in self._subthreads:
-            if sub_thread.is_alive():
-                sub_thread.quit()
-                sub_thread.join()
-
-    def pre_work(self):
-        # Work before the event loop started
-        pass
-
-    def post_work(self):
-        # Work after the event loop ended
-        pass
-
-    def start(self) -> None:
-        if self.started:
-            return
+class AsyncTimer:
+    def __init__(self, timeout: float, callback: Awaitable, once: bool=False):
+        self._timeout: float = timeout
+        self._callback: Awaitable = callback
+        if once:
+            self._task = asyncio.create_task(self._job_once())
         else:
-            self.started = True
-            self._exit_flag = False
-            return super().start()
+            self._task = asyncio.create_task(self._job_loop())
 
-    def pause(self):
-        self._pause_event.clear()
-        self._pause_event.wait()
+    async def _job_once(self):
+        await asyncio.sleep(self._timeout)
+        await self._callback()
 
-    def resume(self):
-        self._pause_event.set()
-
-    def quit(self):
-        self._put_slot(self._set_exit_true.__func__, [], {})
-        with self._signal_avalaible:
-            self._signal_avalaible.notify()
-
-    def _set_exit_true(self):
-        self._exit_flag = True
-
-
-class RepeatingTimer(Timer): 
-    def run(self):
-        while not self.finished.is_set():
-            self.function(*self.args, **self.kwargs)
-            self.finished.wait(self.interval)
-
+    async def _job_loop(self):
+        while True:
+            await asyncio.sleep(self._timeout)
+            await self._callback()
+            
+    def cancel(self):
+        self._task.cancel()

@@ -1,1 +1,1 @@
-from .src.signal_slot import Signal, SignalInstance, Slot, EventLoopThread, RepeatingTimer
+from .src.signal_slot import Signal, SignalInstance, Slot, AsyncTimer
