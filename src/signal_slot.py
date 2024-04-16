@@ -212,7 +212,14 @@ class AsyncTimer:
     def __init__(self, timeout: float, callback: Awaitable, once: bool=False):
         self._timeout: float = timeout
         self._callback: Awaitable = callback
-        if once:
+        self._once: bool = once
+        self._started: bool = False
+        self._task: Optional[asyncio.Task] = None
+
+    def start(self):
+        if self._started:
+            return
+        if self._once:
             self._task = asyncio.create_task(self._job_once())
         else:
             self._task = asyncio.create_task(self._job_loop())
@@ -227,4 +234,6 @@ class AsyncTimer:
             await self._callback()
             
     def cancel(self):
+        if not self._started:
+            return
         self._task.cancel()
