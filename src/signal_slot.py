@@ -92,7 +92,7 @@ class SignalInstance():
                 if loop and loop.is_running():
                     loop.create_task(task)
                 else:
-                    asyncio.run(task)
+                    asyncio.create_task(task)
             else:
                 if owner is None:
                     cbl(*call_args, **call_kwargs)
