@@ -216,6 +216,16 @@ class AsyncTimer:
         self._started: bool = False
         self._task: Optional[asyncio.Task] = None
 
+    @property
+    def is_alive(self):
+        if self._task is None:
+            return False
+        if self._task.cancelled():
+            return False
+        if self._task.done():
+            return False
+        return True
+
     def start(self):
         if self._started:
             return
